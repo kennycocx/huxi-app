@@ -429,19 +429,30 @@ function HuxiApp() {
   const [gratItems, setGratItems] = useState(["", "", ""]);
   const [affirmation] = useState(() => MEMZ[Math.floor(Math.random() * MEMZ.length)]);
   const [dailyTasks, setDailyTasks] = useState([]);
+  const [lastTaskTexts, setLastTaskTexts] = useState([]);
+  const [tasksGenerated, setTasksGenerated] = useState(false);
+  const [dailyBreaths, setDailyBreaths] = useState(0);
   const [curTask, setCurTask] = useState(null);
   const [taskInput, setTaskInput] = useState("");
+  const [taskTimer, setTaskTimer] = useState(0);
   const [dailyActions, setDailyActions] = useState(0);
   const [lastDay, setLastDay] = useState(() => new Date().toDateString());
   const [totalSessions, setTotalSessions] = useState(0);
   // Invisible level: based on total sessions completed, not shown to user
   // Level 1 (0-4 sessions): check-in + 1 ademhaling + 1 taak, max 2 acties
-  // Level 2 (5-14): + brief + dagboek, max 3 acties  
-  // Level 3 (15-29): + tools menu, max 4 acties
-  // Level 4 (30-59): + zelf oefening kiezen, max 5 acties
-  // Level 5 (60+): alles vrij, geen limiet
+  // Welzijnsniveau based on mood + reason + experience
+  // Beginners/slecht gevoel: MORE micro-moments, LESS choice
+  // Gevorderd/goed gevoel: LESS verplicht, MORE freedom
+  const moodScore = dailyMood === "calm" ? 5 : dailyMood === "ok" ? 4 : dailyMood === "restless" ? 3 : dailyMood === "tense" ? 2 : dailyMood === "overwhelmed" ? 1 : 3;
   const lvl = totalSessions < 5 ? 1 : totalSessions < 15 ? 2 : totalSessions < 30 ? 3 : totalSessions < 60 ? 4 : 5;
-  const maxAct = experience !== "none" ? 99 : lvl === 1 ? 2 : lvl === 2 ? 3 : lvl === 3 ? 4 : lvl === 4 ? 5 : 99;
+  // Daily limits: worse mood = more short tasks, better = fewer but free
+  // Burnout: always less pressure
+  const isBurnout = reason === "burnout";
+  const maxTasks = isBurnout ? 3 : lvl <= 2 ? 5 : lvl <= 3 ? 4 : 3;
+  const maxBreath = isBurnout ? 1 : lvl <= 2 ? 1 : lvl <= 3 ? 2 : 3;
+  const canDoBreath = dailyBreaths < maxBreath;
+  const canDoTask = dailyTasks.length > 0;
+  const allDone = !canDoTask && !canDoBreath && tasksGenerated;
   const [soundOn, setSoundOn] = useState(true);
   const [reminder, setReminder] = useState("");
   const [isPremium] = useState(true);
@@ -460,39 +471,17 @@ function HuxiApp() {
   });
   const [showAvatar, setShowAvatar] = useState(false);
   const [showShop, setShowShop] = useState(false);
-  const [thClients, setThClients] = useState([{
-    name: "Anna V.",
-    mood: "ok",
-    lastActive: "Vandaag",
-    hw: [],
-    id: 1
-  }, {
-    name: "Bert D.",
-    mood: "tense",
-    lastActive: "Gisteren",
-    hw: [],
-    id: 2
-  }, {
-    name: "Clara M.",
-    mood: "calm",
-    lastActive: "Vandaag",
-    hw: [],
-    id: 3
-  }]);
+  const [thClients, setThClients] = useState([]);
   const [selClient, setSelClient] = useState(null);
   const [showAssign, setShowAssign] = useState(false);
   const [showAddEx, setShowAddEx] = useState(false);
   const [custExName, setCustExName] = useState("");
+  const [showAddClient, setShowAddClient] = useState(false);
+  const [newClientName, setNewClientName] = useState("");
   const [custExDesc, setCustExDesc] = useState("");
   const [custExList, setCustExList] = useState([]);
-  const [thCode] = useState("HUXI-" + Math.random().toString(36).substring(2, 8).toUpperCase());
   const [careAlert, setCareAlert] = useState(true);
-  const [thAgenda, setThAgenda] = useState([{
-    client: "Anna V.",
-    time: "14:00",
-    date: "2026-03-18",
-    id: 1
-  }]);
+  const [thAgenda, setThAgenda] = useState([]);
   const [showAgendaAdd, setShowAgendaAdd] = useState(false);
   const [agClient, setAgClient] = useState("");
   const [agDate, setAgDate] = useState("");
@@ -556,6 +545,8 @@ function HuxiApp() {
       setCheckinDone(false);
       setExDone(false);
       setDailyTasks([]);
+      setTasksGenerated(false);
+      setDailyBreaths(0);
     }
   }, [lastDay]);
   // Enrich derived from world items - slow accumulation
@@ -588,18 +579,38 @@ function HuxiApp() {
     }, 180000);
     return () => clearInterval(iv);
   }, [phase, reminder]);
-  // Generate daily tasks after checkin
+  // Generate daily tasks ONCE after checkin - never regenerate same day
   useEffect(() => {
-    if (checkinDone && dailyTasks.length === 0) {
+    if (checkinDone && !tasksGenerated) {
       const type = accType === "child" ? "child" : accType === "junior" ? "junior" : "adult";
-      const pool = [...MICRO[type]].sort(() => Math.random() - 0.5);
-      const count = lvl <= 1 ? 5 : lvl <= 2 ? 4 : lvl <= 3 ? 3 : 2;
-      setDailyTasks(pool.slice(0, count).map((t, i) => ({
-        id: i,
+      const allTasks = [...MICRO[type]];
+      const fresh = allTasks.filter(t => !lastTaskTexts.includes(t));
+      const pool = fresh.length >= maxTasks ? fresh : allTasks;
+      const shuffled = pool.sort(() => Math.random() - 0.5);
+      const picked = [];
+      const usedPrefixes = new Set();
+      for (const t of shuffled) {
+        if (picked.length >= maxTasks) break;
+        const prefix = t.substring(0, 15);
+        if (!usedPrefixes.has(prefix)) {
+          picked.push(t);
+          usedPrefixes.add(prefix);
+        }
+      }
+      if (picked.length < maxTasks) {
+        for (const t of shuffled) {
+          if (picked.length >= maxTasks) break;
+          if (!picked.includes(t)) picked.push(t);
+        }
+      }
+      setDailyTasks(picked.map((t, i) => ({
+        id: Date.now() + i,
         text: t
       })));
+      setLastTaskTexts(picked);
+      setTasksGenerated(true);
     }
-  }, [checkinDone, dailyTasks.length]);
+  }, [checkinDone, tasksGenerated]);
   // Rare animal
   const rareAnimal = useMemo(() => {
     const m = new Date().getMinutes();
@@ -645,6 +656,7 @@ function HuxiApp() {
         setLastExId(ex.id);
         setCoins(c => c + (ex.pts || 10));
         setDailyActions(a => a + 1);
+        setDailyBreaths(b => b + 1);
         setTotalSessions(s => s + 1);
         saveData();
       }, 2500);
@@ -715,7 +727,8 @@ function HuxiApp() {
         totalSessions,
         wi,
         lastDay,
-        dailyActions
+        dailyActions,
+        lastTaskTexts
       }));
     } catch (e) {}
   };
@@ -759,6 +772,7 @@ function HuxiApp() {
           setDiary(d.diary || []);
           setSeenEx(d.seenEx || []);
           setLastExId(d.lastExId || null);
+          if (d.lastTaskTexts) setLastTaskTexts(d.lastTaskTexts);
           setPhase("world");
         }
       }
@@ -769,15 +783,47 @@ function HuxiApp() {
   }, []);
 
   // ═══ FUNCTIONS (no hooks) ═══
+  // Smart exercise unlocking based on mood, experience, reason, sessions
+  const isExUnlocked = ex => {
+    // Experienced users from onboarding: all matching exercises unlocked
+    if (experience === "experienced") return true;
+    // Everyone gets "Laat HUXI kiezen" always
+    // First 2 beginner exercises unlock after 2 sessions
+    if (ex.lv === "b" && totalSessions >= 2 && (ex.id === "basic" || ex.id === "calm2")) return true;
+    // More beginner exercises after 5 sessions
+    if (ex.lv === "b" && totalSessions >= 5) return true;
+    // Some experience from onboarding: beginner always, intermediate after 10
+    if (experience === "some" && ex.lv === "b") return true;
+    if (experience === "some" && ex.lv === "i" && totalSessions >= 10) return true;
+    // Intermediate: need good mood history + enough sessions
+    if (ex.lv === "i") {
+      const goodMoods = ["calm", "ok"];
+      const isStable = goodMoods.includes(dailyMood);
+      if (totalSessions >= 20 && isStable) return true;
+      // 4-7-8 unlocks for sleep problems earlier
+      if (ex.id === "478" && reason === "sleep" && totalSessions >= 8) return true;
+      // Fysiologische zucht for panic/anxiety earlier
+      if (ex.id === "sigh" && (reason === "panic" || reason === "anxiety") && totalSessions >= 8) return true;
+    }
+    // Experienced exercises: need structural good mood + lots of sessions
+    if (ex.lv === "x") {
+      if (totalSessions >= 40 && (dailyMood === "calm" || dailyMood === "ok")) return true;
+    }
+    // Up-energy exercises: NEVER for bad moods, need experience + good state
+    if (ex.en === "up") {
+      if (dailyMood === "tense" || dailyMood === "overwhelmed" || dailyMood === "restless") return false;
+      if (totalSessions >= 60 && dailyMood === "calm") return true;
+    }
+    return false;
+  };
   const pickEx = () => {
-    let pool = EX.filter(e => {
-      if (experience === "none" && e.lv !== "b") return false;
-      if (experience === "some" && e.lv === "x") return false;
+    let pool = EX.filter(e => isExUnlocked(e));
+    if (pool.length === 0) pool = EX.filter(e => e.lv === "b");
+    if (pool.length > 1) pool = pool.filter(e => e.id !== lastExId);
+    if (pool.length > 1) pool = pool.filter(e => {
       if (e.en === "up" && (dailyMood === "tense" || dailyMood === "overwhelmed" || dailyMood === "restless")) return false;
-      if (experience === "none" && e.en === "up") return false;
       return true;
     });
-    if (pool.length > 1) pool = pool.filter(e => e.id !== lastExId);
     return pool.length ? pool[Math.floor(Math.random() * pool.length)] : EX[0];
   };
   const launchEx = (ex, r) => {
@@ -921,12 +967,30 @@ function HuxiApp() {
     toolStep < steps.length - 1 ? setToolStep(s => s + 1) : finTool();
   };
   // Task system
+  const isQuestion = text => {
+    const t = text.toLowerCase();
+    return /^(noem|wat|wie|hoe|waar|beschrijf|welk|als je|aan wie|verzin|teken|rate|vertel)/.test(t);
+  };
+  const taskTimerRef = useRef(null);
   const startTask = task => {
     setCurTask(task);
     setTaskInput("");
+    setTaskTimer(isQuestion(task.text) ? 0 : 12);
+    if (taskTimerRef.current) clearInterval(taskTimerRef.current);
+    if (!isQuestion(task.text)) {
+      let t = 12;
+      taskTimerRef.current = setInterval(() => {
+        t--;
+        setTaskTimer(t);
+        if (t <= 0) {
+          clearInterval(taskTimerRef.current);
+          taskTimerRef.current = null;
+          completeTask(task.id);
+        }
+      }, 1000);
+    }
   };
-  const finishTask = () => {
-    const tid = curTask && curTask.id;
+  const completeTask = tid => {
     setCurTask(null);
     setDailyTasks(p => p.filter(t => t.id !== tid));
     setGrowth(g => Math.min(1, g + 0.003));
@@ -937,10 +1001,16 @@ function HuxiApp() {
     }));
     setDailyActions(a => a + 1);
     setTotalSessions(s => s + 1);
-    setCoins(c => c + 5);
+    if (accType === "child" || accType === "junior") setCoins(c => c + 5);
     setTimeout(saveData, 500);
   };
-  const canDoMore = dailyActions < maxAct;
+  const finishTask = () => {
+    if (taskTimerRef.current) {
+      clearInterval(taskTimerRef.current);
+      taskTimerRef.current = null;
+    }
+    if (curTask) completeTask(curTask.id);
+  };
   const moodSlow = dailyMood === "overwhelmed" ? 2.5 : dailyMood === "tense" ? 1.8 : 1;
   const moodWarm = dailyMood === "overwhelmed" ? "rgba(255,180,100,0.1)" : dailyMood === "tense" ? "rgba(255,160,80,0.06)" : "transparent";
   const tI = {
@@ -1291,6 +1361,21 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
+      background: "#E8A840",
+      borderRadius: 12,
+      padding: "10px 16px",
+      marginBottom: 16,
+      textAlign: "center"
+    }
+  }, /*#__PURE__*/React.createElement("p", {
+    style: {
+      color: "white",
+      fontSize: 11,
+      fontWeight: 600,
+      margin: 0
+    }
+  }, "Testversie \u2014 koppeling met cli\xEBnten wordt beschikbaar in de volledige app")), /*#__PURE__*/React.createElement("div", {
+    style: {
       display: "flex",
       justifyContent: "space-between",
       alignItems: "center",
@@ -1320,14 +1405,113 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
       marginBottom: 16,
       boxShadow: "0 2px 10px rgba(0,0,0,0.06)"
     }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 12
+    }
   }, /*#__PURE__*/React.createElement("h3", {
     style: {
       fontSize: 14,
       fontWeight: 700,
       color: g,
-      marginBottom: 12
+      margin: 0
     }
-  }, "Cli\xEBnten"), thClients.map(cl => /*#__PURE__*/React.createElement("div", {
+  }, "Cli\xEBnten"), /*#__PURE__*/React.createElement("button", {
+    style: {
+      background: "rgba(76,175,122,0.1)",
+      border: "1px solid rgba(76,175,122,0.3)",
+      borderRadius: 8,
+      padding: "4px 10px",
+      fontSize: 10,
+      color: g,
+      cursor: "pointer",
+      fontFamily: "inherit"
+    },
+    onClick: () => setShowAddClient(true)
+  }, "+ Cli\xEBnt")), showAddClient && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 10,
+      background: "rgba(76,175,122,0.04)",
+      borderRadius: 10,
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    style: {
+      width: "100%",
+      padding: "8px 12px",
+      borderRadius: 8,
+      border: "1px solid " + g3,
+      fontSize: 13,
+      fontFamily: "inherit",
+      color: g,
+      outline: "none"
+    },
+    placeholder: "Naam van de cli\xEBnt",
+    value: newClientName,
+    onChange: e => setNewClientName(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter" && newClientName.trim()) {
+        setThClients(p => [...p, {
+          name: newClientName.trim(),
+          mood: "ok",
+          lastActive: "Nieuw",
+          hw: [],
+          id: Date.now()
+        }]);
+        setNewClientName("");
+        setShowAddClient(false);
+      }
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 6,
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    style: {
+      flex: 1,
+      background: "none",
+      border: "1px solid " + g3,
+      borderRadius: 8,
+      padding: "6px",
+      fontSize: 10,
+      color: g5,
+      cursor: "pointer"
+    },
+    onClick: () => {
+      setShowAddClient(false);
+      setNewClientName("");
+    }
+  }, "Annuleren"), /*#__PURE__*/React.createElement("button", {
+    className: "mb",
+    style: {
+      flex: 1,
+      padding: "6px",
+      fontSize: 10
+    },
+    onClick: () => {
+      if (newClientName.trim()) {
+        setThClients(p => [...p, {
+          name: newClientName.trim(),
+          mood: "ok",
+          lastActive: "Nieuw",
+          hw: [],
+          id: Date.now()
+        }]);
+        setNewClientName("");
+        setShowAddClient(false);
+      }
+    }
+  }, "Toevoegen"))), thClients.length === 0 && !showAddClient && /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12,
+      color: g5
+    }
+  }, "Nog geen cli\xEBnten toegevoegd"), thClients.map(cl => /*#__PURE__*/React.createElement("div", {
     key: cl.id,
     style: {
       padding: "10px 0",
@@ -1352,7 +1536,12 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
       color: g5,
       margin: 0
     }
-  }, cl.lastActive)), /*#__PURE__*/React.createElement("button", {
+  }, cl.lastActive)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("button", {
     style: {
       background: "rgba(76,175,122,0.1)",
       border: "1px solid rgba(76,175,122,0.3)",
@@ -1367,7 +1556,16 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
       setSelClient(cl);
       setShowAssign(true);
     }
-  }, "+ Oefening")), cl.hw.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "+ Oefening"), /*#__PURE__*/React.createElement("button", {
+    style: {
+      background: "none",
+      border: "none",
+      fontSize: 14,
+      cursor: "pointer",
+      color: "#C4553A"
+    },
+    onClick: () => setThClients(p => p.filter(c => c.id !== cl.id))
+  }, "\u2715"))), cl.hw.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 6
     }
@@ -1430,29 +1628,6 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
       margin: 0
     }
   }, ce.name)))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "white",
-      borderRadius: 16,
-      padding: 16,
-      boxShadow: "0 2px 10px rgba(0,0,0,0.06)"
-    }
-  }, /*#__PURE__*/React.createElement("h3", {
-    style: {
-      fontSize: 14,
-      fontWeight: 700,
-      color: g,
-      marginBottom: 8
-    }
-  }, "Code: ", /*#__PURE__*/React.createElement("code", {
-    style: {
-      letterSpacing: 2
-    }
-  }, thCode)), /*#__PURE__*/React.createElement("p", {
-    style: {
-      fontSize: 10,
-      color: g5
-    }
-  }, "Deel met cli\xEBnt voor premium")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "white",
       borderRadius: 16,
@@ -2657,53 +2832,78 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
   }, memTxt))), checkinDone && !showEx && !showOffer && !showMem && !showSett && !showGuide && !showLetter && !showLetters && !showDiary && !showPicker && !showTools && !activeTool && !showAvatar && !showShop && !curTask && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "absolute",
-      bottom: 14,
+      bottom: 0,
       left: 0,
       right: 0,
       zIndex: 20,
+      padding: "8px 12px 14px",
+      background: "linear-gradient(0deg,rgba(245,247,250,0.97) 70%,rgba(245,247,250,0))"
+    }
+  }, allDone ? /*#__PURE__*/React.createElement("p", {
+    style: {
+      textAlign: "center",
+      color: "#4CAF7A",
+      fontSize: 11,
+      fontWeight: 600,
+      marginBottom: 6
+    }
+  }, "Goed gedaan vandaag! Tot morgen \uD83C\uDF31") : /*#__PURE__*/React.createElement("p", {
+    style: {
+      textAlign: "center",
+      color: g5,
+      fontSize: 10,
+      marginBottom: 6
+    }
+  }, "Jouw moment van de dag"), /*#__PURE__*/React.createElement("div", {
+    style: {
       display: "flex",
       justifyContent: "center",
-      gap: 8,
-      padding: "0 12px",
+      gap: 6,
       flexWrap: "wrap"
     }
-  }, canDoMore && /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", {
     className: "ab",
-    onClick: () => {
-      if (experience === "none" && lvl < 4) startAuto();else setShowPicker(true);
-    }
-  }, "\uD83C\uDF2C\uFE0F Adem"), dailyTasks.length > 0 && canDoMore && /*#__PURE__*/React.createElement("button", {
-    className: "ab",
-    onClick: () => startTask(dailyTasks[0])
-  }, "\uD83C\uDF3F Taak"), !canDoMore && /*#__PURE__*/React.createElement("div", {
     style: {
-      background: "rgba(255,255,255,0.85)",
-      backdropFilter: "blur(8px)",
-      padding: "8px 16px",
-      borderRadius: 14,
-      color: "#4A5568",
-      fontSize: 11,
-      fontWeight: 600
+      opacity: canDoBreath ? 1 : 0.35
+    },
+    onClick: () => {
+      if (!canDoBreath) {
+        setWMsg("Je ademhaling voor vandaag is klaar — tot morgen 🌿");
+        setTimeout(() => setWMsg(""), 3000);
+        return;
+      }
+      if (lvl < 4) {
+        startAuto();
+      } else {
+        setShowPicker(true);
+      }
     }
-  }, "Je hebt genoeg gedaan voor nu \u2014 rust even \uD83C\uDF31"), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83C\uDF2C\uFE0F Adem"), /*#__PURE__*/React.createElement("button", {
+    className: "ab",
+    style: {
+      opacity: canDoTask ? 1 : 0.35
+    },
+    onClick: () => {
+      if (!canDoTask) {
+        setWMsg("Alle opdrachten van vandaag zijn klaar — tot morgen 🌿");
+        setTimeout(() => setWMsg(""), 3000);
+        return;
+      }
+      startTask(dailyTasks[0]);
+    }
+  }, "\uD83C\uDF3F Opdracht"), /*#__PURE__*/React.createElement("button", {
     className: "ab",
     onClick: () => setShowLetter(true)
-  }, "\u2709\uFE0F"), letters.length > 0 && /*#__PURE__*/React.createElement("button", {
+  }, "\u2709\uFE0F Brief"), letters.length > 0 && /*#__PURE__*/React.createElement("button", {
     className: "ab",
     onClick: () => setShowLetters(true)
   }, "\uD83C\uDF43"), /*#__PURE__*/React.createElement("button", {
     className: "ab",
     onClick: () => setShowDiary(true)
-  }, "\uD83D\uDCD4"), lvl >= 3 && /*#__PURE__*/React.createElement("button", {
-    className: "ab",
-    onClick: () => setShowTools(true)
-  }, "\uD83E\uDDD8"), (accType === "child" || accType === "junior") && /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDCD4 Dagboek"), (accType === "child" || accType === "junior") && /*#__PURE__*/React.createElement("button", {
     className: "ab",
     onClick: () => setShowAvatar(true)
-  }, "\uD83D\uDC64"), /*#__PURE__*/React.createElement("button", {
-    className: "ab",
-    onClick: () => setShowGuide(true)
-  }, "\u2753")), curTask && /*#__PURE__*/React.createElement("div", {
+  }, "\uD83D\uDC64 Avatar"))), curTask && /*#__PURE__*/React.createElement("div", {
     style: {
       ...F,
       zIndex: 30,
@@ -2724,34 +2924,22 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
     }
   }, /*#__PURE__*/React.createElement("p", {
     style: {
-      color: "rgba(74,85,104,0.4)",
-      fontSize: 10,
-      marginBottom: 10
-    }
-  }, "Even stilstaan \uD83C\uDF3F"), /*#__PURE__*/React.createElement("p", {
-    style: {
       color: "#3D4A58",
       fontSize: 17,
       fontWeight: 700,
       lineHeight: 1.5,
       marginBottom: 18
     }
-  }, curTask.text), /*#__PURE__*/React.createElement("textarea", {
+  }, curTask.text), isQuestion(curTask.text) ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("textarea", {
     className: "ta",
-    placeholder: accType === "child" ? "Schrijf of teken hier..." : "Schrijf hier wat in je opkomt...",
+    placeholder: accType === "child" ? "Schrijf hier..." : "Schrijf hier wat in je opkomt...",
     value: taskInput,
     onChange: e => setTaskInput(e.target.value),
     rows: 2,
     style: {
       marginBottom: 12
     }
-  }), /*#__PURE__*/React.createElement("p", {
-    style: {
-      color: "rgba(74,85,104,0.35)",
-      fontSize: 9,
-      marginBottom: 10
-    }
-  }, "Neem even de tijd \u2014 geen haast"), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("button", {
     className: "mb",
     style: {
       padding: "12px 30px",
@@ -2760,7 +2948,24 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
     onClick: () => {
       if (taskInput.trim().length >= 2) finishTask();
     }
-  }, "Klaar \uD83C\uDF3F"))), showPicker && /*#__PURE__*/React.createElement("div", {
+  }, "Klaar \uD83C\uDF3F")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 50,
+      height: 50,
+      margin: "0 auto 12px",
+      borderRadius: "50%",
+      border: "3px solid #5BB8A0",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 18,
+      fontWeight: 700,
+      color: "#3D4A58"
+    }
+  }, taskTimer))))), showPicker && /*#__PURE__*/React.createElement("div", {
     style: overlay(),
     onClick: () => setShowPicker(false)
   }, /*#__PURE__*/React.createElement("div", {
@@ -2775,7 +2980,7 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
       textAlign: "center",
       marginBottom: 6
     }
-  }, "\uD83C\uDF2C\uFE0F Kies een oefening"), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83C\uDF2C\uFE0F Ademhaling"), /*#__PURE__*/React.createElement("button", {
     className: "rb",
     style: {
       justifyContent: "center",
@@ -2783,61 +2988,72 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
       borderColor: "rgba(76,175,122,0.3)",
       marginBottom: 10
     },
-    onClick: startAuto
+    onClick: () => {
+      startAuto();
+    }
   }, /*#__PURE__*/React.createElement("span", null, "\u2728"), /*#__PURE__*/React.createElement("span", {
     style: {
       color: g,
       fontSize: 14,
       fontWeight: 600
     }
-  }, "Laat HUXI kiezen")), EX.filter(ex => {
-    if (experience === "none" && ex.lv !== "b") return false;
-    if (experience === "some" && ex.lv === "x") return false;
-    if (ex.en === "up" && (dailyMood === "tense" || dailyMood === "overwhelmed")) return false;
-    return true;
-  }).map(ex => /*#__PURE__*/React.createElement("button", {
-    key: ex.id,
-    className: "rb",
-    onClick: () => launchEx(ex, null)
-  }, /*#__PURE__*/React.createElement("span", null, "\uD83C\uDF2C\uFE0F"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      textAlign: "left"
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "#3D4A58",
-      fontSize: 13,
-      fontWeight: 600,
-      display: "block"
-    }
-  }, accType === "child" && ex.nameChild || ex.name), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "rgba(45,90,39,0.55)",
-      fontSize: 10
-    }
-  }, ex.desc)), experience === "experienced" && /*#__PURE__*/React.createElement("select", {
-    onClick: e => e.stopPropagation(),
-    onChange: e => {
-      if (e.target.value) launchEx(ex, parseInt(e.target.value));
-    },
-    style: {
-      background: "rgba(255,255,255,0.2)",
-      border: "1px solid rgba(91,184,160,0.3)",
-      borderRadius: 8,
-      padding: "2px",
-      color: "#3D4A58",
-      fontSize: 10
-    }
-  }, /*#__PURE__*/React.createElement("option", {
-    value: ""
-  }, "x", ex.r), /*#__PURE__*/React.createElement("option", {
-    value: ex.r + 3
-  }, "x", ex.r + 3), /*#__PURE__*/React.createElement("option", {
-    value: ex.r + 6
-  }, "x", ex.r + 6), /*#__PURE__*/React.createElement("option", {
-    value: ex.r + 10
-  }, "x", ex.r + 10)))))), showLetter && /*#__PURE__*/React.createElement("div", {
+  }, "Laat HUXI kiezen")), EX.map(ex => {
+    const unlocked = isExUnlocked(ex);
+    const nm = accType === "child" && ex.nameChild || ex.name;
+    return /*#__PURE__*/React.createElement("button", {
+      key: ex.id,
+      className: "rb",
+      style: {
+        opacity: unlocked ? 1 : 0.35
+      },
+      onClick: () => {
+        if (!unlocked) {
+          setWMsg("Blijf oefenen — deze komt beschikbaar naarmate je groeit 🌿");
+          setTimeout(() => setWMsg(""), 3000);
+          return;
+        }
+        launchEx(ex, null);
+      }
+    }, /*#__PURE__*/React.createElement("span", null, unlocked ? "🌬️" : "🔒"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        textAlign: "left"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: g,
+        fontSize: 13,
+        fontWeight: 600,
+        display: "block"
+      }
+    }, nm), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: g5,
+        fontSize: 10
+      }
+    }, ex.desc)), unlocked && experience === "experienced" && /*#__PURE__*/React.createElement("select", {
+      onClick: e => e.stopPropagation(),
+      onChange: e => {
+        if (e.target.value) launchEx(ex, parseInt(e.target.value));
+      },
+      style: {
+        background: "rgba(255,255,255,0.2)",
+        border: "1px solid rgba(91,184,160,0.3)",
+        borderRadius: 8,
+        padding: "2px",
+        color: g,
+        fontSize: 10
+      }
+    }, /*#__PURE__*/React.createElement("option", {
+      value: ""
+    }, "x", ex.r), /*#__PURE__*/React.createElement("option", {
+      value: ex.r + 3
+    }, "x", ex.r + 3), /*#__PURE__*/React.createElement("option", {
+      value: ex.r + 6
+    }, "x", ex.r + 6), /*#__PURE__*/React.createElement("option", {
+      value: ex.r + 10
+    }, "x", ex.r + 10)));
+  }))), showLetter && /*#__PURE__*/React.createElement("div", {
     style: overlay(),
     onClick: () => setShowLetter(false)
   }, /*#__PURE__*/React.createElement("div", {
@@ -4149,22 +4365,13 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
       zIndex: 20,
       padding: "10px 12px",
       display: "flex",
-      justifyContent: "space-between",
+      justifyContent: "flex-end",
       alignItems: "center"
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "badge"
-  }, /*#__PURE__*/React.createElement("span", null, tI), " ", tod), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 6
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "badge"
-  }, /*#__PURE__*/React.createElement("span", null, sI), " ", season), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", {
     className: "sb",
     onClick: () => setShowSett(true)
-  }, "\u2699\uFE0F"))), showSett && /*#__PURE__*/React.createElement("div", {
+  }, "\u2699\uFE0F")), showSett && /*#__PURE__*/React.createElement("div", {
     style: overlay(),
     onClick: () => setShowSett(false)
   }, /*#__PURE__*/React.createElement("div", {
