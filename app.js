@@ -2829,7 +2829,7 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
       fontWeight: 600,
       lineHeight: 1.5
     }
-  }, memTxt))), checkinDone && !showEx && !showOffer && !showMem && !showSett && !showGuide && !showLetter && !showLetters && !showDiary && !showPicker && !showTools && !activeTool && !showAvatar && !showShop && !curTask && /*#__PURE__*/React.createElement("div", {
+  }, memTxt))), checkinDone && !showEx && !showMem && !showSett && !showGuide && !showLetter && !showLetters && !showDiary && !showPicker && !showTools && !activeTool && !showAvatar && !showShop && !curTask && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "absolute",
       bottom: 0,
@@ -4439,26 +4439,6 @@ html,body{background:#F5F7FA;overflow:hidden;height:100vh;height:100dvh;-webkit-
       padding: "11px 0"
     },
     onClick: () => setShowSett(false)
-  }, "Sluiten"))), checkinDone && !showEx && !showOffer && !showMem && growth >= 0.15 && !showSett && !showGuide && !showLetter && !showLetters && !showDiary && !showPicker && !showTools && !activeTool && !showAvatar && /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: "absolute",
-      top: "40%",
-      left: "50%",
-      transform: "translate(-50%,-50%)",
-      zIndex: 15,
-      cursor: "pointer"
-    },
-    onClick: onLeaf
-  }, /*#__PURE__*/React.createElement("p", {
-    style: {
-      background: "rgba(255,255,255,0.88)",
-      backdropFilter: "blur(8px)",
-      padding: "8px 16px",
-      borderRadius: 14,
-      color: g,
-      fontSize: 12,
-      fontWeight: 600
-    }
-  }, "Tik op een blad")));
+  }, "Sluiten"))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(HuxiApp));
